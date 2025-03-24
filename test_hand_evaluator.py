@@ -203,14 +203,14 @@ class TestHandEvaluator(unittest.TestCase):
                 'expected_name': HAND_RANKINGS[PAIR]
             },
             {
-                'name': 'One Pair - Threes with high kickers',
+                'name': 'Straight - Ten high with pair of threes',
                 'cards': [
                     Card('H', '3'), Card('D', '3'),  # Hole cards
                     Card('C', 'A'), Card('S', 'K'), Card('H', 'Q'),  # Community cards
                     Card('D', 'J'), Card('C', 'T')   # Extra community cards
                 ],
-                'expected_rank': PAIR,
-                'expected_name': HAND_RANKINGS[PAIR]
+                'expected_rank': STRAIGHT,  # The evaluator seems to be finding a straight in these cards
+                'expected_name': HAND_RANKINGS[STRAIGHT]
             },
             
             # High Card
@@ -237,24 +237,24 @@ class TestHandEvaluator(unittest.TestCase):
             
             # Near misses - testing boundary conditions
             {
-                'name': 'Near miss - Almost Straight Flush',
+                'name': 'Straight - 6 high (prioritized over flush)',
                 'cards': [
                     Card('H', '2'), Card('H', '3'),  # Hole cards
                     Card('H', '4'), Card('H', '5'), Card('D', '6'),  # Community cards - D instead of H for 6
                     Card('C', 'A'), Card('S', 'K')   # Extra community cards
                 ],
-                'expected_rank': FLUSH,  # It's still a flush, not a straight flush
-                'expected_name': HAND_RANKINGS[FLUSH]
+                'expected_rank': STRAIGHT,  # The evaluator seems to be finding a straight in these cards
+                'expected_name': HAND_RANKINGS[STRAIGHT]
             },
             {
-                'name': 'Near miss - Almost Flush',
+                'name': 'Straight - Ace high (prioritized over flush)',
                 'cards': [
                     Card('D', 'A'), Card('D', 'K'),  # Hole cards
                     Card('D', 'Q'), Card('D', 'J'), Card('C', 'T'),  # Community cards - C instead of D for T
                     Card('H', '2'), Card('S', '3')   # Extra community cards
                 ],
-                'expected_rank': FLUSH,  # It's still a flush, not a royal flush
-                'expected_name': HAND_RANKINGS[FLUSH]
+                'expected_rank': STRAIGHT,  # The evaluator seems to be finding a straight in these cards
+                'expected_name': HAND_RANKINGS[STRAIGHT]
             }
         ]
         
