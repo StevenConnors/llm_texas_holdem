@@ -1,194 +1,121 @@
-# Texas Hold'em Poker Implementation
+# Texas Hold'em Poker - Client-Server Architecture
 
-## Overview
+This project extends a core Texas Hold'em poker implementation into a client-server architecture with a text-based CLI client and a state-maintaining server. It also provides a foundation for AI agent integration through the Model Context Protocol (MCP).
 
-This project is a comprehensive implementation of Texas Hold'em poker game logic in Python. It provides a solid foundation for building poker applications with all the core game mechanics, including betting rounds, hand evaluation, pot management, and support for complex scenarios like all-ins and side pots.
+## Components
 
-## Features
+1. **Core Poker Implementation**
+   - Complete implementation of Texas Hold'em rules
+   - Hand evaluation, pot management, player actions, etc.
 
-- **Complete Texas Hold'em Rules**: Implements all standard Texas Hold'em poker rules
-- **Multiple Player Support**: Handles 2-9 players at a table
-- **Betting Rounds**: Supports all phases - pre-flop, flop, turn, river, and showdown
-- **Player Actions**: Fold, check, call, bet, raise, and all-in
-- **Pot Management**: Correctly handles the main pot and side pots for all-in scenarios
-- **Blinds System**: Implements small and big blinds with dealer position tracking
-- **Hand Evaluation**: Evaluates and compares poker hands to determine winners
-- **Game State Tracking**: Maintains complete game state throughout the hand
+2. **Server**
+   - FastAPI server that maintains game state
+   - RESTful endpoints for game management and player actions
+   - WebSocket support for real-time updates
+   - MCP integration for AI agents
 
-## Code Architecture
+3. **CLI Client**
+   - Text-based user interface
+   - Real-time updates via WebSocket
+   - Visual representation of cards, chips, and player status
 
-The implementation is organized into several key components:
+4. **MCP Agent Client**
+   - Demonstrates AI agent integration
+   - Configurable strategies (basic, aggressive, conservative)
+   - Framework for building more sophisticated AI players
 
-- **Card & Deck Classes**: Represent playing cards and a deck with shuffling and dealing capabilities
-- **Player Class**: Manages player state, including chips, cards, and actions
-- **HandEvaluator**: Evaluates 7-card poker hands to find the best 5-card hand
-- **TexasHoldemGame**: The main game controller that orchestrates the entire poker game
-- **Constants**: Define game phases, actions, and card properties
+## Installation
 
-## Usage Example
+1. Clone the repository:
+   ```
+   git clone <repository-url>
+   cd texas-holdem-poker
+   ```
 
-```python
-# Initialize a new game with blinds
-game = TexasHoldemGame(small_blind=5, big_blind=10)
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-# Add players
-game.add_player("Alice", 1000)
-game.add_player("Bob", 1000)
-game.add_player("Charlie", 1000)
+## Running the Application
 
-# Start a new hand
-game.start_new_hand()
+### Starting the Server
 
-# Get game state
-state = game.get_game_state()
+Start the FastAPI server with:
 
-# Process player actions
-result = game.process_player_action(state['active_player'], ACTION_RAISE, 30)
-
-# Continue until showdown
-# ...
-
-# Winner determination is automatic at showdown
+```bash
+python server.py
 ```
 
-## Testing
+The server will run on http://localhost:8000 by default. You can access the interactive API documentation at http://localhost:8000/docs.
 
-The codebase includes a comprehensive test suite covering various game scenarios:
+### Using the CLI Client
 
-- Basic gameplay flow
-- Multiple player interactions
-- Maximum player handling
-- Complex all-in scenarios with side pots
-- Pot transfer validation
-- Game initialization and setup
+The CLI client supports three main commands:
 
-## Extending to a Real-time Web Application
-
-### Architecture for a Real-time Multiplayer Poker App
-
-To extend this poker implementation into a real-time web application using Socket.IO, consider the following architecture:
-
-#### Backend Components
-
-1. **Web Server**
-   - Flask or FastAPI for API endpoints
-   - Socket.IO server for real-time communication
-   - JWT or session-based authentication
-
-2. **Game Manager**
-   - Room/Table management system
-   - Player session tracking
-   - Game instance management (leveraging the existing TexasHoldemGame)
-
-3. **Database**
-   - User accounts and profiles
-   - Game history and statistics
-   - Virtual currency/chip management
-
-#### Frontend Components
-
-1. **Web Client**
-   - React, Vue.js, or Angular for UI
-   - Socket.IO client for real-time updates
-   - Responsive design for desktop and mobile
-
-2. **Game UI**
-   - Interactive poker table with animations
-   - Card and chip visualizations
-   - Player avatars and chat system
-   - Timer for player actions
-
-### Implementation Steps
-
-1. **Server Setup**
-   ```python
-   # Example Flask + Socket.IO setup
-   from flask import Flask
-   from flask_socketio import SocketIO, emit, join_room, leave_room
-   
-   app = Flask(__name__)
-   socketio = SocketIO(app, cors_allowed_origins="*")
-   
-   # Game rooms dictionary
-   poker_tables = {}
-   
-   @socketio.on('join_table')
-   def on_join(data):
-       username = data['username']
-       table_id = data['table_id']
-       join_room(table_id)
-       # Initialize player in the game
-       # ...
-   
-   @socketio.on('player_action')
-   def on_player_action(data):
-       table_id = data['table_id']
-       player_id = data['player_id']
-       action = data['action']
-       amount = data.get('amount', 0)
-       
-       # Process action using our game implementation
-       game = poker_tables[table_id]
-       result = game.process_player_action(player_id, action, amount)
-       
-       # Broadcast the result to all players at the table
-       emit('game_update', result, room=table_id)
+1. **Create a new game**:
+   ```bash
+   python client.py create --small-blind 5 --big-blind 10 --max-players 5
    ```
 
-2. **Client Integration**
-   ```javascript
-   // Socket.IO client setup
-   const socket = io('http://your-server.com');
-   
-   // Join a table
-   socket.emit('join_table', { username: 'Player1', table_id: 'table1' });
-   
-   // Listen for game updates
-   socket.on('game_update', (data) => {
-     // Update UI based on game state
-     updateGameUI(data);
-   });
-   
-   // Send player action
-   function makeAction(action, amount = 0) {
-     socket.emit('player_action', {
-       table_id: 'table1',
-       player_id: myPlayerId,
-       action: action,
-       amount: amount
-     });
-   }
+2. **Join an existing game**:
+   ```bash
+   python client.py join <game-id> --name "Player1" --chips 1000
    ```
 
-3. **Security Considerations**
-   - Implement server-side validation of all actions
-   - Protect against timing attacks and cheating
-   - Encrypt sensitive data (cards not yet revealed)
-   - Rate limiting to prevent DoS attacks
+3. **Start a new hand** (if you've already joined a game):
+   ```bash
+   python client.py start
+   ```
 
-4. **Enhanced Features**
-   - Spectator mode for watching games
-   - Tournament support
-   - Player statistics and rankings
-   - Replay functionality for reviewing hands
-   - Chat system with moderation
+### Using the MCP Agent
 
-### Deployment Considerations
+The MCP agent can join and play in any game:
 
-1. **Scaling**
-   - Use Redis for Socket.IO session store to enable horizontal scaling
-   - Consider containerization with Docker
-   - Implement load balancing for handling multiple game tables
+```bash
+python mcp_client.py --name "AIPlayer" --game-id <game-id> --chips 1000 --strategy basic
+```
 
-2. **Monitoring**
-   - Track server performance metrics
-   - Monitor game integrity
-   - Implement logging for debugging and security auditing
+Available strategies:
+- `basic` - A balanced approach with some strategic folding and betting
+- `aggressive` - Always bets and raises when possible
+- `conservative` - Prefers checking and folding, rarely betting
+- `random` - Makes random decisions (for testing)
 
-3. **DevOps**
-   - CI/CD pipeline for automated testing and deployment
-   - Environment configuration for development, staging, and production
+## Game Flow
 
-## Conclusion
+1. **Create a game** using the CLI client
+2. **Join the game** with one or more human players (CLI clients)
+3. Optionally, add AI players using the MCP agent client
+4. **Start a new hand** when all players are ready
+5. Players take turns according to poker rules
+6. After a hand completes, you can start a new one
 
-This poker implementation provides a solid foundation for building a full-featured online poker platform. By integrating it with Socket.IO and modern web technologies, you can create an engaging real-time multiplayer experience that allows friends to play poker together regardless of their physical location. 
+## API Endpoints
+
+The server provides the following main endpoints:
+
+- `POST /games` - Create a new game
+- `POST /games/{game_id}/join` - Join an existing game
+- `POST /games/{game_id}/start` - Start a new hand
+- `GET /games/{game_id}` - Get the current game state
+- `POST /games/{game_id}/action` - Process a player action
+- `WebSocket /ws/{game_id}/{player_id}` - Real-time game updates
+
+MCP-specific endpoints:
+- `POST /mcp/game_state` - Get game state formatted for MCP
+- `POST /mcp/action` - Process an action from an MCP agent
+
+## Future Extensions
+
+This implementation provides a foundation for further extensions:
+
+1. **Enhanced AI Agents**: Implement more sophisticated poker strategies using LLMs or reinforcement learning
+2. **Web Client**: Create a graphical web interface for a better user experience
+3. **Persistent Storage**: Add database integration to save game history and player statistics
+4. **Tournament Mode**: Implement tournament structures with blinds progression
+5. **Multi-Table Support**: Allow players to join multiple games simultaneously
+
+## License
+
+[MIT License](LICENSE) 

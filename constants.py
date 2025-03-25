@@ -48,7 +48,7 @@ HAND_RANKINGS = {
 }
 
 # Game phases
-PHASE_PREFLOP = 'pre-flop'
+PHASE_PREFLOP = 'pre_flop'
 PHASE_FLOP = 'flop'
 PHASE_TURN = 'turn'
 PHASE_RIVER = 'river'
@@ -60,4 +60,4 @@ ACTION_CHECK = 'check'
 ACTION_CALL = 'call'
 ACTION_BET = 'bet'
 ACTION_RAISE = 'raise'
-ACTION_ALL_IN = 'all-in' 
+ACTION_ALL_IN = 'all_in' 
