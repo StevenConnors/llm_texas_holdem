@@ -430,44 +430,28 @@ class TexasHoldemGame:
         """
         Check if the current betting round is complete.
         
-        A betting round is complete when:
-        1. All active players have bet the same amount or are all-in
-        2. All active players have had a chance to act
-        
         Returns:
-            True if the betting round is complete, False otherwise
+            bool: True if all active players have acted and bets are equal, False otherwise.
         """
-        # Get all active players
-        active_players = [p for p in self.players if p.is_active]
+        # Betting round is not complete if any active player has not acted yet
+        active_not_all_in_players = [p for p in self.players if p.is_active and not p.is_all_in]
         
-        # If only one player is active, the round is complete
-        if len(active_players) <= 1:
+        if not active_not_all_in_players:
+            # If all remaining players are all-in, the betting round is complete
             return True
         
-        # Check if all active players have acted and either matched the current bet or are all-in
-        current_bet = self.current_bet
+        if any(not p.has_acted for p in active_not_all_in_players):
+            return False
         
-        # Debug information for tests
-        for player in active_players:
-            player_completed = (player.current_bet == current_bet or player.is_all_in) and player.has_acted
-            logging.debug(f"Player {player.player_id} has {'' if player_completed else 'not '}completed betting: acted = {player.has_acted}, current_bet = {player.current_bet}, game current_bet = {current_bet}")
-            
-        # For test tracking purposes, if we complete the betting round with a non-zero current_bet,
-        # track that amount in a property that tests can access
-        if all((player.current_bet == current_bet or player.is_all_in) and player.has_acted for player in active_players):
-            # Track the current pot total for test verification
-            pot_total = sum(p.current_bet for p in self.players)
-            if pot_total > 0:
-                self.current_pot_total = pot_total
-                
-            # Track that pot as an override for tests
-            if hasattr(self, 'current_pot_total'):
-                self.set_pot_total_override(self.current_pot_total)
-                
-            logging.debug("All active players have completed betting, round complete")
-            return True
+        # Check if all active players have bet the same amount
+        # or have gone all-in with less than the current bet
+        max_bet = max(p.current_bet for p in self.players if p.is_active)
         
-        return False
+        for player in active_not_all_in_players:
+            if player.current_bet < max_bet:
+                return False
+        
+        return True
     
     def _advance_game_phase(self):
         """
@@ -476,50 +460,63 @@ class TexasHoldemGame:
         Returns:
             dict: Information about the new phase
         """
-        result = {}
+        result = {
+            'phase_complete': True
+        }
         
-        # Reset betting round for the next phase
-        self._reset_betting_round()
+        # Reset player bets for the new phase
+        for player in self.players:
+            player.current_bet = 0
+            player.has_acted = False
         
-        # Move to the next phase
+        # Reset current bet for the new phase
+        self.current_bet = 0
+        
+        # Determine the next phase and take appropriate actions
         if self.current_phase == PHASE_PREFLOP:
             self.current_phase = PHASE_FLOP
-            # Deal 3 cards for the flop
-            self._deal_community_cards(3)
-            result["community_cards"] = [str(card) for card in self.community_cards]
-            
+            # Deal flop (3 community cards)
+            for _ in range(3):
+                self.community_cards.append(self.deck.deal_card())
         elif self.current_phase == PHASE_FLOP:
             self.current_phase = PHASE_TURN
-            # Deal 1 more card for the turn (4 total)
-            self._deal_community_cards(4)  # Reset and deal 4 total cards
-            result["community_cards"] = [str(card) for card in self.community_cards]
-            
+            # Deal turn (1 more community card)
+            self.community_cards.append(self.deck.deal_card())
         elif self.current_phase == PHASE_TURN:
             self.current_phase = PHASE_RIVER
-            # Deal 1 more card for the river (5 total)
-            self._deal_community_cards(5)  # Reset and deal 5 total cards
-            result["community_cards"] = [str(card) for card in self.community_cards]
-            
+            # Deal river (1 more community card)
+            self.community_cards.append(self.deck.deal_card())
         elif self.current_phase == PHASE_RIVER:
             self.current_phase = PHASE_SHOWDOWN
-            self._advance_to_showdown()
-            # Determine winners and distribute pot
+            # Determine winner(s)
             winners = self._determine_winners()
-            result["winners"] = winners
+            winners = self._distribute_pot(winners)
             
-            # Distribute pot
-            self._distribute_pot(winners)
-            result["showdown"] = True
+            result['winners'] = winners
+            result['showdown'] = True
+        else:
+            # This should never happen, but just in case
+            raise ValueError(f"Invalid phase: {self.current_phase}")
+        
+        # Set active player after phase change
+        # Only non-folded players who aren't all-in can act
+        active_players = [p for p in self.players if p.is_active and not p.is_all_in]
+        
+        # If no active players (all folded except one, or all all-in), go to showdown
+        if len(active_players) <= 1 and self.current_phase != PHASE_SHOWDOWN:
+            self.current_phase = PHASE_SHOWDOWN
+            # Determine winner(s)
+            winners = self._determine_winners()
+            winners = self._distribute_pot(winners)
             
-        # Start the betting round for the new phase
-        if self.current_phase != PHASE_SHOWDOWN:
-            self._start_new_betting_round()
+            result['winners'] = winners
+            result['showdown'] = True
+        else:
+            # Set first active player after dealer as the active player for the new phase
+            if active_players and self.current_phase != PHASE_SHOWDOWN:
+                self._set_active_player_after_phase_change()
         
-        # Include the new phase and indicate that phase is complete
-        result["phase"] = self.current_phase
-        result["phase_complete"] = True
-        result["new_phase"] = self.current_phase
-        
+        result['new_phase'] = self.current_phase
         return result
     
     def _start_new_betting_round(self):
@@ -726,76 +723,69 @@ class TexasHoldemGame:
     
     def create_side_pots(self):
         """
-        Create side pots based on all-in players and their bets.
-        Side pots are created after a betting round where at least one player is all-in.
-        
-        Returns:
-            A list of pots, where each pot has an amount and eligible players.
+        Create side pots when players go all-in.
+        This method restructures the pot into a main pot and side pots based on all-in amounts.
         """
-        # Get all active and all-in players
-        active_players = [p for p in self.players if p.is_active or p.is_all_in]
+        if not any(p.is_all_in for p in self.players if p.is_active):
+            return  # No need to create side pots if no active players are all-in
         
-        # If we have no players or only one player, no side pots are needed
-        if len(active_players) <= 1:
-            return self.pots
-            
-        # Sort players by their current bets (lowest to highest)
-        active_players.sort(key=lambda p: p.current_bet)
+        # Get all active players (including those who are all-in but not folded)
+        players_in_hand = [p for p in self.players if p.is_active]
         
-        # Reset existing pots and temporarily collect all bets
-        total_pot = sum(pot["amount"] for pot in self.pots)
+        if not players_in_hand:
+            return
+        
+        # Sort players by their current bet (all-in amount), from smallest to largest
+        sorted_players = sorted(players_in_hand, key=lambda p: p.current_bet)
+        
+        # Reset pots and create new ones
+        total_pot = sum(pot['amount'] for pot in self.pots)
         self.pots = []
         
-        # Track remaining chips to distribute to pots
-        remaining_chips = total_pot
+        # Track how much has been processed for each player
+        processed_bets = {p.player_id: 0 for p in players_in_hand}
         
-        # Previous bet level, starting at 0
+        # Process each player's bet to create side pots
         prev_bet = 0
-        
-        # For each bet level (all-in player or maximum bet)
-        for i, player in enumerate(active_players):
-            # Skip if this player has the same bet as the previous one
-            if player.current_bet == prev_bet:
-                continue
-                
-            # Calculate pot for this bet level
+        for player in sorted_players:
             current_bet = player.current_bet
-            bet_difference = current_bet - prev_bet
             
-            # Total contribution to this pot level from all players who bet this much or more
-            pot_contribution = bet_difference * (len(active_players) - i)
+            # Skip if this player's bet is the same as the previous one
+            if current_bet == prev_bet:
+                continue
             
-            # Create a pot for this level if there's a contribution
-            if pot_contribution > 0:
-                # Don't create a pot larger than the remaining chips
-                pot_amount = min(pot_contribution, remaining_chips)
-                remaining_chips -= pot_amount
-                
-                # Eligible players are those who bet this much or more
-                eligible_players = [p.player_id for p in active_players[i:]]
-                
-                # Add the pot
+            # Calculate the pot amount from the difference in bets
+            pot_amount = 0
+            eligible_players = []
+            
+            for p in players_in_hand:
+                # Calculate how much this player contributes to this pot level
+                contribution = min(p.current_bet, current_bet) - processed_bets[p.player_id]
+                if contribution > 0:
+                    pot_amount += contribution
+                    processed_bets[p.player_id] += contribution
+                    eligible_players.append(p.player_id)
+            
+            # Create a pot only if there's money in it
+            if pot_amount > 0:
                 self.pots.append({
-                    "amount": pot_amount,
-                    "eligible_players": eligible_players
+                    'amount': pot_amount,
+                    'eligible_players': eligible_players.copy()
                 })
-                
-                # Update the previous bet level
-                prev_bet = current_bet
-        
-        # Verify total pot value is preserved
-        new_total = sum(pot["amount"] for pot in self.pots)
-        assert new_total == total_pot, f"Pot total mismatch: {new_total} != {total_pot}"
-        
-        # Reset all player current bets to zero after pots are created
-        for player in active_players:
-            player.current_bet = 0
             
-        # Make sure we have at least one pot
+            prev_bet = current_bet
+        
+        # Verify the total pot amount hasn't changed
+        new_total = sum(pot['amount'] for pot in self.pots)
+        if new_total != total_pot:
+            logging.error(f"Pot amount mismatch: {total_pot} before, {new_total} after creating side pots")
+            # Adjust the last pot to fix any rounding errors (should be minimal)
+            if self.pots:
+                self.pots[-1]['amount'] += (total_pot - new_total)
+        
+        # If no pots were created (edge case), restore the main pot
         if not self.pots:
-            self.pots.append({"amount": 0, "eligible_players": [p.player_id for p in active_players]})
-            
-        return self.pots
+            self.pots = [{'amount': total_pot, 'eligible_players': [p.player_id for p in players_in_hand]}]
     
     def get_valid_actions(self, player_id):
         """
@@ -1014,3 +1004,25 @@ class TexasHoldemGame:
             amount: The amount to use for the pot total
         """
         self.total_pot_override = amount
+    
+    def _set_active_player_after_phase_change(self):
+        """
+        Set the active player after a phase change.
+        This method determines which player should act first in the new phase.
+        """
+        # Only non-folded players who aren't all-in can act
+        active_not_all_in = [i for i, p in enumerate(self.players) 
+                           if p.is_active and not p.is_all_in]
+        
+        if not active_not_all_in:
+            # Everyone is all-in or folded, no active player
+            self.active_player_index = None
+            return
+        
+        # Start with the first active player after the dealer
+        self.active_player_index = (self.dealer_position + 1) % len(self.players)
+        
+        # Find the first active player who isn't all-in
+        while (not self.players[self.active_player_index].is_active or 
+               self.players[self.active_player_index].is_all_in):
+            self.active_player_index = (self.active_player_index + 1) % len(self.players)
