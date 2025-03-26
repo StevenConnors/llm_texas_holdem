@@ -634,170 +634,95 @@ class TexasHoldemGame:
     
     def _distribute_pot(self, winners):
         """
-        Distribute the pot to the winner(s).
+        Distribute the pot among the winners.
         
         Args:
-            winners: List of dictionaries with winner information
+            winners: List of winner objects
         
         Returns:
-            None
+            List of winners with updated amounts won
         """
-        # If no winners or no pot, do nothing
         if not winners:
-            return
-            
-        # Initialize amount field for all winners if it doesn't exist
-        for winner in winners:
-            if 'amount' not in winner:
-                winner['amount'] = 0
+            return []
         
-        # Calculate total pot amount
-        total_pot_before = sum(pot["amount"] for pot in self.pots) if self.pots else 0
-        logging.debug(f"Distributing pot: {total_pot_before} chips to {len(winners)} winners")
+        # Store the total pot amount before distribution for reference
+        total_pot_before_distribution = sum(pot['amount'] for pot in self.pots)
         
-        # If pot is empty but we have winners, check if it's a mock test where pot is tracked differently
-        if total_pot_before == 0 and winners and hasattr(self, 'total_pot_override'):
-            total_pot_before = self.total_pot_override
-            logging.debug(f"Using override pot amount: {total_pot_before}")
-        
-        # If there's only one winner, they get the entire pot
+        # Handle case where there's a single winner
         if len(winners) == 1:
-            winner = winners[0]
+            single_winner = winners[0]
+            winner_id = single_winner['player'].player_id
             
-            # Find the player object either from the winner dict or by player_id
-            target_player = None
-            if 'player' in winner and hasattr(winner['player'], 'chips'):
-                target_player = winner['player']
-            elif 'player_id' in winner:
-                for player in self.players:
-                    if player.player_id == winner['player_id']:
-                        target_player = player
-                        break
+            # Calculate total winnings across all eligible pots
+            total_winnings = 0
+            for pot in self.pots:
+                if winner_id in pot['eligible_players']:
+                    total_winnings += pot['amount']
+                    
+            # Update winner's chips and record amount won
+            single_winner['player'].add_chips(total_winnings)
+            single_winner['amount'] = total_winnings
             
-            # Update player chips if we found the player
-            if target_player:
-                logging.debug(f"Single winner: Player {target_player.player_id} wins {total_pot_before} chips")
-                target_player.chips += total_pot_before
-                winner['amount'] = total_pot_before
-                logging.debug(f"Player {target_player.player_id} now has {target_player.chips} chips")
-            else:
-                logging.error(f"Warning: Could not find player to award pot to. Winner info: {winner}")
-        else:
-            # Multiple winners - distribute each pot based on eligibility
-            if not self.pots:
-                # Handle case where test is using a total pot without side pots
-                split_amount = total_pot_before // len(winners)
-                remainder = total_pot_before % len(winners)
-                
-                # Distribute the split amount to each winner
-                for i, winner in enumerate(winners):
-                    # Find the player object either from the winner dict or by player_id
-                    target_player = None
-                    player_id = None
-                    if 'player' in winner and hasattr(winner['player'], 'chips'):
-                        target_player = winner['player']
-                        player_id = winner['player'].player_id
-                    elif 'player_id' in winner:
-                        player_id = winner['player_id']
-                        for player in self.players:
-                            if player.player_id == player_id:
-                                target_player = player
-                                break
-                    
-                    # Update player chips if we found the player
-                    if target_player:
-                        # Add remainder to first player
-                        extra = remainder if i == 0 else 0
-                        target_player.chips += split_amount + extra
-                        winner['amount'] = split_amount + extra
-                        logging.debug(f"Player {player_id} receives {split_amount + extra} chips (split pot)")
-                    else:
-                        logging.error(f"Warning: Could not find player to award pot to. Winner info: {winner}")
-            else:
-                # Process each pot separately
-                for pot_index, pot in enumerate(self.pots):
-                    pot_amount = pot["amount"]
-                    
-                    # Determine which winners are eligible for this pot
-                    eligible_winners = []
-                    for winner in winners:
-                        # Check if winner has a player_id field and it's in eligible_players
-                        if 'player_id' in winner and winner['player_id'] in pot.get('eligible_players', []):
-                            eligible_winners.append(winner)
-                        # Or if winner has a player field and its ID is in eligible_players
-                        elif 'player' in winner and hasattr(winner['player'], 'player_id') and winner['player'].player_id in pot.get('eligible_players', []):
-                            eligible_winners.append(winner)
-                    
-                    # If no eligible winners found, consider all winners eligible (for handling mock tests)
-                    if not eligible_winners and winners:
-                        eligible_winners = winners
-                    
-                    logging.debug(f"Pot #{pot_index}: {pot_amount} chips, {len(eligible_winners)} eligible winners")
-                    
-                    if eligible_winners:
-                        # Split the pot among eligible winners
-                        split_amount = pot_amount // len(eligible_winners)
-                        remainder = pot_amount % len(eligible_winners)
-                        
-                        # Distribute the split amount to each winner
-                        for i, winner in enumerate(eligible_winners):
-                            # Find the player object either from the winner dict or by player_id
-                            target_player = None
-                            player_id = None
-                            if 'player' in winner and hasattr(winner['player'], 'chips'):
-                                target_player = winner['player']
-                                player_id = winner['player'].player_id
-                            elif 'player_id' in winner:
-                                player_id = winner['player_id']
-                                for player in self.players:
-                                    if player.player_id == player_id:
-                                        target_player = player
-                                        break
-                            
-                            # Update player chips if we found the player
-                            if target_player:
-                                # First winner gets remainder
-                                extra = remainder if i == 0 else 0
-                                target_player.chips += split_amount + extra
-                                winner['amount'] = winner.get('amount', 0) + split_amount + extra
-                                logging.debug(f"Player {player_id} receives {split_amount + extra} chips from pot #{pot_index}")
-                            else:
-                                logging.error(f"Warning: Could not find player {player_id} to award pot to")
-        
-        # Verify all chips were distributed
-        total_distributed = sum(winner.get('amount', 0) for winner in winners)
-        logging.debug(f"Total pot: {total_pot_before}, Total distributed: {total_distributed}")
-        
-        # Assert that all chips have been distributed
-        if total_distributed != total_pot_before:
-            logging.error(f"Not all chips were distributed! {total_distributed} != {total_pot_before}")
+            # Save pot information before emptying
+            self.last_pot_total = total_pot_before_distribution
+            self.last_pot_distribution = [{'player_id': winner_id, 'amount': total_winnings}]
             
-            # Attempt to distribute remaining chips to the first winner if there is a mismatch
-            if winners and total_distributed < total_pot_before:
-                remaining = total_pot_before - total_distributed
+            # Empty the pots but keep the structure intact
+            for pot in self.pots:
+                pot['amount'] = 0
                 
-                # Find the player object for the first winner
-                target_player = None
-                player_id = None
-                
-                if 'player' in winners[0] and hasattr(winners[0]['player'], 'chips'):
-                    target_player = winners[0]['player']
-                    player_id = target_player.player_id
-                elif 'player_id' in winners[0]:
-                    player_id = winners[0]['player_id']
-                    for player in self.players:
-                        if player.player_id == player_id:
-                            target_player = player
-                            break
-                
-                if target_player:
-                    logging.debug(f"Distributing remaining {remaining} chips to Player {player_id}")
-                    target_player.chips += remaining
-                    winners[0]['amount'] = winners[0].get('amount', 0) + remaining
-                    logging.debug(f"Player {player_id} now has {target_player.chips} chips")
+            return winners
         
-        # Clear the pots after distribution
-        self.pots = []
+        # Handle multiple winners (pot chopping scenario)
+        pot_distribution = []
+        
+        # Initialize amount for each winner
+        for winner in winners:
+            winner['amount'] = 0
+        
+        # Process each pot separately
+        for pot in self.pots:
+            # Get player IDs of eligible winners for this pot
+            eligible_winner_ids = []
+            for winner in winners:
+                winner_id = winner['player'].player_id
+                if winner_id in pot['eligible_players']:
+                    eligible_winner_ids.append(winner_id)
+                
+            eligible_winners = [w for w in winners if w['player'].player_id in eligible_winner_ids]
+            
+            if eligible_winners:
+                # Split the pot among eligible winners
+                share = pot['amount'] // len(eligible_winners)
+                remainder = pot['amount'] % len(eligible_winners)
+                
+                # Distribute shares
+                for i, winner in enumerate(eligible_winners):
+                    # First winner gets the remainder if there is one
+                    extra = remainder if i == 0 else 0
+                    amount = share + extra
+                    
+                    # Update winner's chips
+                    winner['player'].add_chips(amount)
+                    
+                    # Track amount won by this player (accumulate from multiple pots)
+                    winner['amount'] += amount
+                    
+                    # Record distribution
+                    pot_distribution.append({
+                        'player_id': winner['player'].player_id,
+                        'amount': amount
+                    })
+        
+        # Save pot information before emptying
+        self.last_pot_total = total_pot_before_distribution
+        self.last_pot_distribution = pot_distribution
+        
+        # Empty the pots but keep the structure intact
+        for pot in self.pots:
+            pot['amount'] = 0
+        
+        return winners
     
     def create_side_pots(self):
         """
@@ -929,12 +854,20 @@ class TexasHoldemGame:
         if self.active_player_index is not None:
             active_player = self.players[self.active_player_index].player_id
             
+        # Calculate current pot total
+        pot_total = sum(pot['amount'] for pot in self.pots)
+        
+        # If we're at showdown and pots are empty but we have a record of last pot total
+        if self.current_phase == PHASE_SHOWDOWN and pot_total == 0 and hasattr(self, 'last_pot_total'):
+            pot_total = self.last_pot_total
+        
         return {
             'phase': self.current_phase,
             'community_cards': [str(card) for card in self.community_cards],
             'pots': [{'amount': pot['amount'], 
                       'eligible_players': pot['eligible_players']} 
                      for pot in self.pots],
+            'pot': pot_total,  # Add the total pot amount directly
             'current_bet': self.current_bet,
             'active_player': active_player,
             'dealer': self.dealer_position,
