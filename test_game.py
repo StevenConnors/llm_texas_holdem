@@ -708,5 +708,111 @@ class TestTexasHoldemGame(unittest.TestCase):
         self.assertEqual(result['new_phase'], PHASE_SHOWDOWN)
         self.assertIn('winners', result, "Should have determined a winner at showdown")
 
+    def test_ante_and_button_rotation(self):
+        """Test ante collection and proper button rotation across multiple hands."""
+        # Setup game with 4 players and ante
+        ante_amount = 2
+        game = TexasHoldemGame(small_blind=5, big_blind=10, ante=ante_amount)
+        
+        # Add 4 players with 1000 chips each
+        player1_id = game.add_player("Player 1", 1000)
+        player2_id = game.add_player("Player 2", 1000)
+        player3_id = game.add_player("Player 3", 1000)
+        player4_id = game.add_player("Player 4", 1000)
+        
+        # Initial total chips
+        initial_total_chips = sum(player.chips for player in game.players)
+        
+        # Start first hand
+        game.start_new_hand()
+        
+        # Record initial positions
+        first_dealer = game.dealer_position
+        first_sb = game.small_blind_position
+        first_bb = game.big_blind_position
+        
+        # Verify ante was collected correctly
+        expected_pot = game.small_blind + game.big_blind + (ante_amount * 4)  # SB + BB + ante from all 4 players
+        self.assertEqual(game.pots[0]['amount'], expected_pot)
+        
+        # Verify each player paid ante and blinds correctly
+        for player in game.players:
+            expected_chips = 1000 - ante_amount - (game.small_blind if player.position == 'small_blind' else 0) - (game.big_blind if player.position == 'big_blind' else 0)
+            self.assertEqual(player.chips, expected_chips)
+        
+        # Complete the hand by folding all players
+        state = game.get_game_state()
+        while state['phase'] != PHASE_SHOWDOWN:
+            active_player = state['active_player']
+            if active_player is not None:
+                result = game.process_player_action(active_player, ACTION_FOLD)
+                state = game.get_game_state()
+        
+        # Start second hand
+        game.start_new_hand()
+        
+        # Verify button rotated correctly
+        self.assertEqual(game.dealer_position, (first_dealer + 1) % 4)
+        self.assertEqual(game.small_blind_position, (first_sb + 1) % 4)
+        self.assertEqual(game.big_blind_position, (first_bb + 1) % 4)
+        
+        # Verify antes collected again in the second hand
+        expected_pot = game.small_blind + game.big_blind + (ante_amount * 4)
+        self.assertEqual(game.pots[0]['amount'], expected_pot)
+        
+        # Complete the second hand
+        state = game.get_game_state()
+        while state['phase'] != PHASE_SHOWDOWN:
+            active_player = state['active_player']
+            if active_player is not None:
+                result = game.process_player_action(active_player, ACTION_FOLD)
+                state = game.get_game_state()
+        
+        # Start third hand
+        game.start_new_hand()
+        
+        # Verify button rotated again
+        self.assertEqual(game.dealer_position, (first_dealer + 2) % 4)
+        self.assertEqual(game.small_blind_position, (first_sb + 2) % 4)
+        self.assertEqual(game.big_blind_position, (first_bb + 2) % 4)
+        
+        # Verify the hands_played counter
+        self.assertEqual(game.hands_played, 3)
+        
+        # Verify burnt cards functionality by checking community cards in each phase
+        # Complete the third hand phase by phase
+        state = game.get_game_state()
+        self.assertEqual(len(game.community_cards), 0, "No community cards in preflop")
+        
+        # Progress to flop
+        while state['phase'] == PHASE_PREFLOP:
+            active_player = state['active_player']
+            if active_player is not None:
+                result = game.process_player_action(active_player, ACTION_CHECK)
+                state = game.get_game_state()
+        
+        self.assertEqual(state['phase'], PHASE_FLOP)
+        self.assertEqual(len(game.community_cards), 3, "Should have 3 community cards in flop")
+        
+        # Progress to turn
+        while state['phase'] == PHASE_FLOP:
+            active_player = state['active_player']
+            if active_player is not None:
+                result = game.process_player_action(active_player, ACTION_CHECK)
+                state = game.get_game_state()
+        
+        self.assertEqual(state['phase'], PHASE_TURN)
+        self.assertEqual(len(game.community_cards), 4, "Should have 4 community cards in turn")
+        
+        # Progress to river
+        while state['phase'] == PHASE_TURN:
+            active_player = state['active_player']
+            if active_player is not None:
+                result = game.process_player_action(active_player, ACTION_CHECK)
+                state = game.get_game_state()
+        
+        self.assertEqual(state['phase'], PHASE_RIVER)
+        self.assertEqual(len(game.community_cards), 5, "Should have 5 community cards in river")
+
 if __name__ == '__main__':
     unittest.main()

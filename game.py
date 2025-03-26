@@ -11,7 +11,7 @@ import logging
 class TexasHoldemGame:
     """Main class for managing a Texas Hold'em poker game."""
     
-    def __init__(self, small_blind=1, big_blind=2, max_players=9):
+    def __init__(self, small_blind=1, big_blind=2, max_players=9, ante=0):
         """
         Initialize a Texas Hold'em game.
         
@@ -19,6 +19,7 @@ class TexasHoldemGame:
             small_blind (int, optional): Small blind amount. Defaults to 1.
             big_blind (int, optional): Big blind amount. Defaults to 2.
             max_players (int, optional): Maximum number of players. Defaults to 9.
+            ante (int, optional): Ante amount. Defaults to 0 (no ante).
         """
         self.players = []
         self.deck = Deck()
@@ -31,9 +32,11 @@ class TexasHoldemGame:
         self.big_blind_position = None
         self.small_blind = small_blind
         self.big_blind = big_blind
+        self.ante = ante
         self.current_bet = 0
         self.hand_evaluator = HandEvaluator()
         self.max_players = max_players
+        self.hands_played = 0  # Track number of hands played
         
     def add_player(self, name, chips):
         """
@@ -106,6 +109,11 @@ class TexasHoldemGame:
             
         # Assign positions and post blinds
         self._assign_positions()
+        
+        # Collect antes from all active players
+        self._post_antes()
+        
+        # Post blinds
         self._post_blinds()
         
         # Deal hole cards
@@ -119,6 +127,9 @@ class TexasHoldemGame:
             self.active_player_index = (self.big_blind_position + 1) % len(self.players)
             while not self.players[self.active_player_index].is_active:
                 self.active_player_index = (self.active_player_index + 1) % len(self.players)
+        
+        # Increment the hand counter
+        self.hands_played += 1
                 
         return True
     
@@ -150,6 +161,22 @@ class TexasHoldemGame:
         self.big_blind_position = big_blind_index
         self.players[big_blind_index].position = 'big_blind'
     
+    def _post_antes(self):
+        """Collect antes from all active players."""
+        if self.ante <= 0:
+            return  # No antes in this game
+            
+        for player in self.players:
+            if player.chips > 0:  # Only collect from players with chips
+                # Post ante (limited by available chips)
+                ante_amount = min(self.ante, player.chips)
+                player.chips -= ante_amount
+                self.pots[0]['amount'] += ante_amount
+                
+                # If player has no chips left after posting ante, mark as all-in
+                if player.chips == 0:
+                    player.is_all_in = True
+                    
     def _post_blinds(self):
         """Collect small and big blinds from the designated players."""
         # Small blind
@@ -172,15 +199,22 @@ class TexasHoldemGame:
                 player.cards.append(self.deck.deal_card())
                 player.cards.append(self.deck.deal_card())
     
-    def _deal_community_cards(self, count):
+    def _deal_community_cards(self, count, should_burn=True):
         """
         Deal a specific number of community cards.
         
         Args:
             count (int): Number of cards to deal
+            should_burn (bool, optional): Whether to burn a card before dealing. Defaults to True.
         """
-        # Reset community cards at the beginning of each phase
-        self.community_cards = []
+        # For flop, we need to reset community cards
+        if self.current_phase == PHASE_PREFLOP:
+            self.community_cards = []
+        
+        if should_burn:
+            # Burn a card (discard from deck)
+            if len(self.deck.cards) > 0:
+                self.deck.deal_card()  # Card is discarded
         
         # Deal the correct number of cards for the phase
         for _ in range(count):
@@ -475,17 +509,16 @@ class TexasHoldemGame:
         # Determine the next phase and take appropriate actions
         if self.current_phase == PHASE_PREFLOP:
             self.current_phase = PHASE_FLOP
-            # Deal flop (3 community cards)
-            for _ in range(3):
-                self.community_cards.append(self.deck.deal_card())
+            # Burn one card, then deal flop (3 community cards)
+            self._deal_community_cards(3)
         elif self.current_phase == PHASE_FLOP:
             self.current_phase = PHASE_TURN
-            # Deal turn (1 more community card)
-            self.community_cards.append(self.deck.deal_card())
+            # Burn one card, then deal turn (1 more community card)
+            self._deal_community_cards(1)
         elif self.current_phase == PHASE_TURN:
             self.current_phase = PHASE_RIVER
-            # Deal river (1 more community card)
-            self.community_cards.append(self.deck.deal_card())
+            # Burn one card, then deal river (1 more community card)
+            self._deal_community_cards(1)
         elif self.current_phase == PHASE_RIVER:
             self.current_phase = PHASE_SHOWDOWN
             # Determine winner(s)

@@ -777,6 +777,506 @@ class PokerTieTest(unittest.TestCase):
         self.tester.check_assertions()
 
 
+class PokerButtonRotationTest(unittest.TestCase):
+    """Test case for button rotation and playing multiple consecutive hands"""
+    
+    def setUp(self):
+        self.tester = PokerGameTest()
+        
+    def test_button_rotation_and_multiple_hands(self):
+        """Test that the button rotates correctly between hands and players can play consecutive hands"""
+        self.tester.log_action("\n=== RUNNING BUTTON ROTATION TEST ===\n")
+        
+        # Create a game with 4 players
+        self.tester.create_game()
+        self.tester.player_names = ["Player1", "Player2", "Player3", "Player4"]  # Ensure we have 4 players
+        self.tester.add_players()
+        
+        # Start first hand
+        self.tester.start_game()
+        
+        # Record initial positions
+        game_state = self.tester.get_game_state()
+        initial_dealer = game_state.get("dealer")
+        initial_small_blind = game_state.get("small_blind")
+        initial_big_blind = game_state.get("big_blind")
+        
+        self.tester.log_action(f"Initial positions: Dealer={initial_dealer}, SB={initial_small_blind}, BB={initial_big_blind}")
+        
+        # Get player IDs to check rotation pattern
+        player_ids = [p.get("id") for p in game_state.get("players", [])]
+        self.tester.log_action(f"Player IDs order: {player_ids}")
+        
+        # Track initial chips for each player
+        initial_chips = {}
+        for player in game_state.get("players", []):
+            initial_chips[player.get("id")] = player.get("chips")
+            
+        # Complete the first hand (using standard scenario)
+        self.tester.run_single_hand()
+        
+        # Start the second hand
+        self.tester.log_action("\n=== STARTING SECOND HAND ===\n")
+        response = requests.post(f"{SERVER_URL}/games/{self.tester.game_id}/start")
+        response.raise_for_status()
+        
+        # Get updated positions
+        game_state = self.tester.get_game_state()
+        new_dealer = game_state.get("dealer")
+        new_small_blind = game_state.get("small_blind")
+        new_big_blind = game_state.get("big_blind")
+        
+        self.tester.log_action(f"New positions: Dealer={new_dealer}, SB={new_small_blind}, BB={new_big_blind}")
+        
+        # Get the indices of the initial positions in the player_ids list
+        try:
+            dealer_idx = player_ids.index(initial_dealer)
+            sb_idx = player_ids.index(initial_small_blind)
+            bb_idx = player_ids.index(initial_big_blind)
+            
+            # Calculate expected new positions (circular rotation by 1)
+            expected_dealer = player_ids[(dealer_idx + 1) % len(player_ids)]
+            expected_sb = player_ids[(sb_idx + 1) % len(player_ids)]
+            expected_bb = player_ids[(bb_idx + 1) % len(player_ids)]
+            
+            # Verify positions rotated correctly (should move to next player in clockwise direction)
+            self.tester.assert_condition(
+                new_dealer == expected_dealer,
+                f"Dealer position rotated correctly to {expected_dealer}",
+                f"Dealer position rotated to {new_dealer} instead of {expected_dealer}"
+            )
+            
+            self.tester.assert_condition(
+                new_small_blind == expected_sb,
+                f"Small blind position rotated correctly to {expected_sb}",
+                f"Small blind position rotated to {new_small_blind} instead of {expected_sb}"
+            )
+            
+            self.tester.assert_condition(
+                new_big_blind == expected_bb,
+                f"Big blind position rotated correctly to {expected_bb}",
+                f"Big blind position rotated to {new_big_blind} instead of {expected_bb}"
+            )
+        except ValueError:
+            # Handle case where player IDs can't be found in the list
+            self.tester.assert_condition(
+                False,
+                "All player positions found in player list",
+                "Could not find one or more player positions in player list"
+            )
+        
+        # Play the second hand through the turn
+        self.tester.log_action("Playing second hand through turn phase")
+        phase = game_state.get("phase")
+        
+        # Play until we reach the turn
+        while phase != "turn":
+            active_player = game_state.get("active_player")
+            if active_player is not None:
+                # Get valid actions
+                response = requests.get(
+                    f"{SERVER_URL}/games/{self.tester.game_id}",
+                    params={"player_id": active_player}
+                )
+                valid_actions = response.json().get("valid_actions", {})
+                
+                # Determine action (choose check/call when possible)
+                action, amount = self.tester.determine_action(active_player, valid_actions, game_state)
+                
+                # Perform action
+                result = self.tester.perform_action(active_player, action, amount)
+                
+                # Get updated state
+                game_state = self.tester.get_game_state()
+                phase = game_state.get("phase")
+                
+                # Break if we've reached turn
+                if phase == "turn":
+                    break
+        
+        # Verify we reached the turn
+        self.tester.assert_condition(
+            phase == "turn",
+            "Successfully reached the turn phase in the second hand",
+            f"Failed to reach turn phase, currently at {phase}"
+        )
+            
+        # Get pot value at turn
+        pot_at_turn = game_state.get("pot", 0)
+        self.tester.log_action(f"Pot value at turn: {pot_at_turn}")
+        
+        # Complete the rest of the hand
+        while phase != "showdown":
+            active_player = game_state.get("active_player")
+            if active_player is not None:
+                # Get valid actions
+                response = requests.get(
+                    f"{SERVER_URL}/games/{self.tester.game_id}",
+                    params={"player_id": active_player}
+                )
+                valid_actions = response.json().get("valid_actions", {})
+                
+                # Determine action (choose check/call when possible)
+                action, amount = self.tester.determine_action(active_player, valid_actions, game_state)
+                
+                # Perform action
+                result = self.tester.perform_action(active_player, action, amount)
+                
+                # Get updated state
+                game_state = self.tester.get_game_state()
+                phase = game_state.get("phase")
+        
+        # Verify pot was distributed
+        final_game_state = self.tester.get_game_state()
+        
+        # Check that pot is empty or significantly reduced
+        final_pot = final_game_state.get("pot", 0)
+        self.tester.assert_condition(
+            final_pot < pot_at_turn,
+            f"Pot was distributed after second hand (reduced from {pot_at_turn} to {final_pot})",
+            f"Pot not distributed properly: {pot_at_turn} at turn, {final_pot} after showdown"
+        )
+        
+        # Compare chips before and after to verify some chips moved
+        winners = []
+        for player in final_game_state.get("players", []):
+            player_id = player.get("id")
+            current_chips = player.get("chips")
+            
+            # Track players who gained chips
+            if player_id in initial_chips and current_chips > initial_chips[player_id]:
+                winners.append({
+                    "player_id": player_id,
+                    "name": player.get("name"),
+                    "gained": current_chips - initial_chips[player_id]
+                })
+        
+        # Log the winners
+        if winners:
+            self.tester.log_action("Players who gained chips:")
+            for winner in winners:
+                self.tester.log_action(f"  {winner['name']} (ID: {winner['player_id']}) gained {winner['gained']} chips")
+        
+        self.tester.assert_condition(
+            len(winners) > 0,
+            f"{len(winners)} player(s) gained chips after playing two hands",
+            "No players appear to have gained chips after two hands"
+        )
+        
+        self.tester.check_assertions()
+
+    def test_extended_button_rotation(self):
+        """Test button rotation across three consecutive hands"""
+        self.tester.log_action("\n=== RUNNING EXTENDED BUTTON ROTATION TEST ===\n")
+        
+        # Create a game with 4 players
+        self.tester.create_game()
+        self.tester.player_names = ["Alpha", "Beta", "Gamma", "Delta"]  # Use distinct names
+        self.tester.add_players()
+        
+        # Track positions across three hands
+        dealer_positions = []
+        sb_positions = []
+        bb_positions = []
+        
+        # Play three consecutive hands
+        for hand_num in range(1, 4):
+            self.tester.log_action(f"\n=== STARTING HAND #{hand_num} ===\n")
+            
+            # Start the hand
+            if hand_num == 1:
+                self.tester.start_game()
+            else:
+                response = requests.post(f"{SERVER_URL}/games/{self.tester.game_id}/start")
+                response.raise_for_status()
+            
+            # Get positions
+            game_state = self.tester.get_game_state()
+            dealer = game_state.get("dealer")
+            sb = game_state.get("small_blind")
+            bb = game_state.get("big_blind")
+            
+            # Record positions
+            dealer_positions.append(dealer)
+            sb_positions.append(sb)
+            bb_positions.append(bb)
+            
+            # Log positions for this hand
+            dealer_name = "Unknown"
+            sb_name = "Unknown"
+            bb_name = "Unknown"
+            for player in game_state.get("players", []):
+                if player.get("id") == dealer:
+                    dealer_name = player.get("name", "Unknown")
+                elif player.get("id") == sb:
+                    sb_name = player.get("name", "Unknown")
+                elif player.get("id") == bb:
+                    bb_name = player.get("name", "Unknown")
+            
+            self.tester.log_action(f"Hand #{hand_num} positions:")
+            self.tester.log_action(f"  Dealer: {dealer_name} (ID: {dealer})")
+            self.tester.log_action(f"  Small Blind: {sb_name} (ID: {sb})")
+            self.tester.log_action(f"  Big Blind: {bb_name} (ID: {bb})")
+            
+            # Play the hand quickly (all players check/call when possible)
+            phase = game_state.get("phase")
+            while phase != "showdown":
+                active_player = game_state.get("active_player")
+                if active_player is None:
+                    break
+                    
+                # Get valid actions
+                response = requests.get(
+                    f"{SERVER_URL}/games/{self.tester.game_id}",
+                    params={"player_id": active_player}
+                )
+                valid_actions = response.json().get("valid_actions", {})
+                
+                # Prefer check/call over other actions
+                if "check" in valid_actions:
+                    action, amount = "check", 0
+                elif "call" in valid_actions:
+                    action, amount = "call", valid_actions["call"]["amount"]
+                else:
+                    action, amount = self.tester.determine_action(active_player, valid_actions, game_state)
+                
+                # Perform action
+                result = self.tester.perform_action(active_player, action, amount)
+                
+                # Get updated state
+                game_state = self.tester.get_game_state()
+                phase = game_state.get("phase")
+        
+        # Verify positions rotated properly
+        player_list = [p.get("id") for p in self.tester.get_game_state().get("players", [])]
+        
+        self.tester.log_action("\n=== BUTTON ROTATION SUMMARY ===")
+        self.tester.log_action(f"Dealer positions: {dealer_positions}")
+        self.tester.log_action(f"SB positions: {sb_positions}")
+        self.tester.log_action(f"BB positions: {bb_positions}")
+        
+        # Verify all positions are different
+        self.tester.assert_condition(
+            len(set(dealer_positions)) == 3,
+            "Dealer position changed in each hand",
+            f"Dealer position did not change properly: {dealer_positions}"
+        )
+        
+        self.tester.assert_condition(
+            len(set(sb_positions)) == 3,
+            "Small blind position changed in each hand",
+            f"Small blind position did not change properly: {sb_positions}"
+        )
+        
+        self.tester.assert_condition(
+            len(set(bb_positions)) == 3,
+            "Big blind position changed in each hand",
+            f"Big blind position did not change properly: {bb_positions}"
+        )
+        
+        # Verify that the rotation follows the correct pattern
+        # Each position should move in a clockwise manner (next index in player list)
+        try:
+            for i in range(len(dealer_positions) - 1):
+                # Find current and next position indices
+                current_dealer_idx = player_list.index(dealer_positions[i])
+                next_dealer_idx = player_list.index(dealer_positions[i + 1])
+                
+                # Calculate expected next index (circular)
+                expected_next_idx = (current_dealer_idx + 1) % len(player_list)
+                
+                # Verify rotation pattern for dealer
+                self.tester.assert_condition(
+                    next_dealer_idx == expected_next_idx,
+                    f"Dealer correctly rotated from position {current_dealer_idx} to {next_dealer_idx}",
+                    f"Dealer incorrectly rotated from position {current_dealer_idx} to {next_dealer_idx}, expected {expected_next_idx}"
+                )
+                
+                # Do the same check for SB
+                current_sb_idx = player_list.index(sb_positions[i])
+                next_sb_idx = player_list.index(sb_positions[i + 1])
+                expected_next_idx = (current_sb_idx + 1) % len(player_list)
+                
+                self.tester.assert_condition(
+                    next_sb_idx == expected_next_idx,
+                    f"Small blind correctly rotated from position {current_sb_idx} to {next_sb_idx}",
+                    f"Small blind incorrectly rotated from position {current_sb_idx} to {next_sb_idx}, expected {expected_next_idx}"
+                )
+                
+                # Check for BB
+                current_bb_idx = player_list.index(bb_positions[i])
+                next_bb_idx = player_list.index(bb_positions[i + 1])
+                expected_next_idx = (current_bb_idx + 1) % len(player_list)
+                
+                self.tester.assert_condition(
+                    next_bb_idx == expected_next_idx,
+                    f"Big blind correctly rotated from position {current_bb_idx} to {next_bb_idx}",
+                    f"Big blind incorrectly rotated from position {current_bb_idx} to {next_bb_idx}, expected {expected_next_idx}"
+                )
+        except ValueError:
+            self.tester.assert_condition(
+                False,
+                "Could verify rotation pattern correctly",
+                "Could not analyze rotation pattern due to player position not found in list"
+            )
+        
+        self.tester.check_assertions()
+
+    def test_ante_collection_across_hands(self):
+        """Test that antes are collected properly in each hand"""
+        self.tester.log_action("\n=== RUNNING ANTE COLLECTION TEST ===\n")
+        
+        # Create a game with 4 players, using specific ante
+        ante_amount = 5  # Set ante to a specific value
+        response = requests.post(
+            f"{SERVER_URL}/games",
+            params={
+                "small_blind": 10, 
+                "big_blind": 20, 
+                "max_players": 4,
+                "ante": ante_amount
+            }
+        )
+        response.raise_for_status()
+        self.tester.game_id = response.json()["game_id"]
+        
+        # Add 4 players with 1000 chips each
+        self.tester.player_names = ["W", "X", "Y", "Z"]  # Short names
+        self.tester.add_players()
+        
+        # Track player chips across hands
+        chips_by_hand = []
+        
+        # Play two hands
+        for hand_num in range(1, 3):
+            self.tester.log_action(f"\n=== STARTING HAND #{hand_num} WITH ANTES ===\n")
+            
+            # Start the hand
+            if hand_num == 1:
+                self.tester.start_game()
+            else:
+                response = requests.post(f"{SERVER_URL}/games/{self.tester.game_id}/start")
+                response.raise_for_status()
+            
+            # Get initial state after antes and blinds
+            game_state = self.tester.get_game_state()
+            
+            # Record chip counts before any betting
+            chip_counts = {}
+            for player in game_state.get("players", []):
+                player_id = player.get("id")
+                chips = player.get("chips")
+                chip_counts[player_id] = chips
+            
+            chips_by_hand.append(chip_counts)
+            
+            # Check pot includes antes from all players
+            expected_pot_minimum = ante_amount * 4 + 10 + 20  # 4 antes + SB + BB
+            actual_pot = game_state.get("pot", 0)
+            
+            self.tester.assert_condition(
+                actual_pot >= expected_pot_minimum,
+                f"Pot includes antes (expected at least {expected_pot_minimum}, got {actual_pot})",
+                f"Pot does not include proper antes (expected at least {expected_pot_minimum}, got {actual_pot})"
+            )
+            
+            # Play this hand quickly
+            phase = game_state.get("phase")
+            while phase != "showdown":
+                active_player = game_state.get("active_player")
+                if active_player is None:
+                    break
+                    
+                # Get valid actions
+                response = requests.get(
+                    f"{SERVER_URL}/games/{self.tester.game_id}",
+                    params={"player_id": active_player}
+                )
+                valid_actions = response.json().get("valid_actions", {})
+                
+                # Prefer check/call over other actions
+                if "check" in valid_actions:
+                    action, amount = "check", 0
+                elif "call" in valid_actions:
+                    action, amount = "call", valid_actions["call"]["amount"]
+                else:
+                    action, amount = self.tester.determine_action(active_player, valid_actions, game_state)
+                
+                # Perform action
+                result = self.tester.perform_action(active_player, action, amount)
+                
+                # Get updated state
+                game_state = self.tester.get_game_state()
+                phase = game_state.get("phase")
+        
+        # Compare chip changes across hands
+        if len(chips_by_hand) >= 2:
+            self.tester.log_action("\n=== CHIP CHANGES AFTER ANTES ===")
+            
+            # Compare first hand chips to initial chips (1000)
+            for player_id, chips in chips_by_hand[0].items():
+                # Determine player position in first hand
+                position = "regular"
+                game_state = self.tester.get_game_state()
+                for player in game_state.get("players", []):
+                    if player.get("id") == player_id:
+                        if player.get("position") == "small_blind":
+                            position = "SB"
+                        elif player.get("position") == "big_blind":
+                            position = "BB"
+                        elif player.get("position") == "dealer":
+                            position = "Dealer"
+                
+                expected_chips = 1000
+                if position == "SB":
+                    expected_chips -= (10 + ante_amount)  # SB + ante
+                elif position == "BB":
+                    expected_chips -= (20 + ante_amount)  # BB + ante
+                else:
+                    expected_chips -= ante_amount  # Just ante
+                
+                self.tester.assert_condition(
+                    abs(chips - expected_chips) <= 1,  # Allow for small rounding
+                    f"Player {player_id} ({position}) paid correct ante in hand 1: expected {1000-expected_chips}, actual {1000-chips}",
+                    f"Player {player_id} ({position}) did not pay correct ante in hand 1: expected {expected_chips}, actual {chips}"
+                )
+            
+            # Compare second hand ante payments
+            for player_id, chips in chips_by_hand[1].items():
+                previous_chips = chips_by_hand[0].get(player_id, 1000)
+                chip_difference = previous_chips - chips
+                
+                # Determine player position in second hand
+                position = "regular"
+                game_state = self.tester.get_game_state()
+                for player in game_state.get("players", []):
+                    if player.get("id") == player_id:
+                        if player.get("position") == "small_blind":
+                            position = "SB"
+                        elif player.get("position") == "big_blind":
+                            position = "BB"
+                        elif player.get("position") == "dealer":
+                            position = "Dealer"
+                
+                # In second hand, we just need to verify ante paid from previous chip count
+                # (don't need to account for winnings since we measure from previous)
+                expected_min_chip_difference = ante_amount
+                if position == "SB":
+                    expected_min_chip_difference += 10  # SB + ante
+                elif position == "BB":
+                    expected_min_chip_difference += 20  # BB + ante
+                
+                self.tester.assert_condition(
+                    chip_difference >= expected_min_chip_difference,
+                    f"Player {player_id} ({position}) paid correct ante in hand 2: expected at least {expected_min_chip_difference}, paid {chip_difference}",
+                    f"Player {player_id} ({position}) may not have paid correct ante in hand 2: expected at least {expected_min_chip_difference}, paid {chip_difference}"
+                )
+                
+                self.tester.log_action(f"Player {player_id} ({position}): Hand 1 chips={previous_chips}, Hand 2 chips={chips}, Paid={chip_difference}")
+        
+        self.tester.check_assertions()
+
+
 def check_server_running():
     """Check if the server is running"""
     try:
@@ -792,7 +1292,7 @@ def check_server_running():
 
 if __name__ == "__main__":
     if check_server_running():
-        # Make sure the unittest module knows about our test class
+        # Add our new test to the list
         unittest.main()
     else:
         sys.exit(1) 
